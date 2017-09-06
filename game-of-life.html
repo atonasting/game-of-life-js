@@ -1,0 +1,1016 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game of life</title>
+    <script type="text/javascript" src="js/jquery-1.9.0.min.js"></script>
+    <script type="text/javascript" src="js/ffoffset.min.js"></script>
+    <script type="text/javascript" src="js/lifegamereader.min.js"></script>
+    <script type="text/javascript" src="js/lifegame-patterns0.1.js"></script>
+    <script type="text/javascript">
+        var tip1 = "鼠标左键绘图，右键擦除\n按下Ctrl键可拖拽";
+        var tip2 = "拖拽中\n松开Ctrl键回到绘图模式";
+
+        var currentgamedata = null;  //记录当前帧内容的数组
+        var nextgamedata = null;  //记录下一帧内容的数组（绘制后覆盖current）
+        var canvas; //绘图对象
+
+        var size; //单个节点尺寸
+        var rowcount; //行数
+        var colcount; //列数
+        var speed; //运行速度
+        var border_color = "#FFF"; //单元边框颜色
+        var life_color;  //有生命颜色
+        var life_colors = new Array("#ee3b3b", "#ff7f24", "#eead00", "#66cd00", "#698d69", "#00ced1", "#b23aee", "#333333"); //颜色数组切换
+        var life_color_cursor = 0; //颜色游标
+        var empty_color = "#CCC"; //无生命颜色
+
+        var running = false; //当前是否运行中
+        var mousedrawing = false; //当前是否鼠标绘制中
+        var mousedrawtype; //鼠标绘制状态,true为绘制,false为擦除
+        var step = 0; //自从重置以来运行的步数
+
+        var dragging = false; //当前是否拖拽移动中
+        var dragx = 0, dragy = 0;  //拖拽开始时的鼠标位置
+        var draggingImg; //拖拽中的图形
+
+        var inserting = false; //当前是否准备插入预设形状中
+        var patterndata; //待插入的内容
+        var transparentinsert = false; //透明插入
+
+        var patterncanvas; //预览图canvas对象
+        var previewdata; //当前预览图数组
+
+        $(function () {
+            //加载前判断域名
+            if (top.location.hostname != self.location.hostname) {
+                self.location = "/";
+            }
+            else {
+                init();
+            }
+        });
+
+        //初始化
+        function init() {
+            canvas = document.getElementById("image");
+            if (!canvas.getContext) {
+                $("body").html("您的浏览器不支持HTML5。");
+            }
+            else {
+                $("#imgcontainer").height($(window).height() - $("#toptoolpanel").height() - 2);
+                $("#imgcontainer").width($(window).width() - 2);
+                patterncanvas = document.getElementById("patterncanvas");
+                $("#btnstop").prop("disabled", true);
+                life_color = life_colors[life_color_cursor];
+                $("#btncolor").css("background-color", life_color);
+                $(canvas).css("cursor", "pointer");
+                canvas.title = tip1;
+                if ($(window).width() > 500) loadmodels();//页面宽度过窄时不加载复杂模版
+                setspeed();
+                setsize();
+                reset();
+                draw();
+
+                //加载预设形状，随机选中
+                $("#patterncontainer").height($("#patterncontainer").width());
+                loadpatterntypes();
+                $("#patterntype")[0].selectedIndex = Math.floor(Math.random() * (patterntypes.length)); //随机选中一项
+                loadpatternlist($("#patterntype").val());
+                $("#pattern")[0].selectedIndex = Math.floor(Math.random() * ($("#pattern")[0].options.length)); //随机选中一项
+                $("#txtpattern").val($("#pattern").val());
+                previewdata = read($("#pattern").val());
+                drawpatternpreview();
+                hidemask();
+
+                ///////////绑定事件
+
+                //改变大小
+                $("#size").change(function () {
+                    setsize();
+                    draw();
+                    $("#container").focus();
+                });
+
+                //改变速度
+                $("#speed").change(function () {
+                    setspeed();
+                    $("#container").focus();
+                });
+
+                //单步
+                $("#btnnext").click(function () {
+                    calcnext();
+                    draw();
+                    $("#container").focus();
+                });
+
+                //开始
+                $("#btnstart").click(function () {
+                    running = true;
+                    //按钮状态
+                    $("#btnstart").prop("disabled", true);
+                    $("#btnnext").prop("disabled", true);
+                    $("#btnstop").prop("disabled", false);
+                    $("#models").prop("disabled", true);
+                    $("#btninit").prop("disabled", true);
+                    $("#size").prop("disabled", true);
+                    $("#btnpop").prop("disabled", true);
+                    $("#container").focus();
+                    canvas.title = "";
+                    //开始定时执行
+                    timer();
+                });
+
+                //停止
+                $("#btnstop").click(function () {
+                    running = false;
+                    //按钮状态
+                    $("#btnstart").prop("disabled", false);
+                    $("#btnnext").prop("disabled", false);
+                    $("#btnstop").prop("disabled", true);
+                    $("#models").prop("disabled", false);
+                    $("#btninit").prop("disabled", false);
+                    $("#size").prop("disabled", false);
+                    $("#btnpop").prop("disabled", false);
+                    $("#container").focus();
+                    canvas.title = tip1;
+                });
+
+                //初始化
+                $("#btninit").click(function () {
+                    reset();
+                    draw();
+                    $("#container").focus();
+                });
+
+                //显示遮罩弹窗
+                $("#btnpop").click(function () {
+                    showmask();
+                });
+
+                //切换颜色
+                $("#btncolor").click(function () {
+                    life_color_cursor++;
+                    if (life_color_cursor >= life_colors.length) life_color_cursor = 0;
+                    life_color = life_colors[life_color_cursor];
+                    $("#btncolor").css("background-color", life_color);
+                    nextgamedata = currentgamedata;
+                    currentgamedata = null;
+
+                    draw();
+                    $("#container").focus();
+                });
+
+                //切换预设类别
+                $("#patterntype").change(function () {
+                    loadpatternlist($(this).val());
+                    $("#txtpattern").val($("#pattern").val());
+                    previewdata = read($("#pattern").val());
+                    drawpatternpreview();
+                });
+
+                //切换预设形状
+                $("#pattern").change(function () {
+                    $("#txtpattern").val($("#pattern").val());
+                    previewdata = read($("#pattern").val());
+                    drawpatternpreview();
+                });
+
+                //左旋转
+                $("#btnturnleft").click(function () {
+                    if (previewdata != null && previewdata.length > 0) {
+                        var newrowcount = previewdata[0].length;
+                        var newcolcount = previewdata.length;
+                        var newdata = new Array();
+                        for (var i = 0; i < newrowcount; i++) {
+                            newdata[i] = new Array();
+                            for (var j = 0; j < newcolcount; j++) {
+                                newdata[i][j] = previewdata[j][newrowcount - 1 - i];
+                            }
+                        }
+                        previewdata = newdata;
+                        drawpatternpreview();
+                        $("#txtpattern").val(generaterle(previewdata));
+                    }
+                });
+
+                //右旋转
+                $("#btnturnright").click(function () {
+                    if (previewdata != null && previewdata.length > 0) {
+                        var newrowcount = previewdata[0].length;
+                        var newcolcount = previewdata.length;
+                        var newdata = new Array();
+                        for (var i = 0; i < newrowcount; i++) {
+                            newdata[i] = new Array();
+                            for (var j = 0; j < newcolcount; j++) {
+                                newdata[i][j] = previewdata[newcolcount - 1 - j][i];
+                            }
+                        }
+                        previewdata = newdata;
+                        drawpatternpreview();
+                        $("#txtpattern").val(generaterle(previewdata));
+                    }
+                });
+
+                //水平翻转
+                $("#btnflipx").click(function () {
+                    if (previewdata != null && previewdata.length > 0) {
+                        var newrowcount = previewdata.length;
+                        var newcolcount = previewdata[0].length;
+                        var newdata = new Array();
+                        for (var i = 0; i < newrowcount; i++) {
+                            newdata[i] = new Array();
+                            for (var j = 0; j < newcolcount; j++) {
+                                newdata[i][j] = previewdata[i][newcolcount - 1 - j];
+                            }
+                        }
+                        previewdata = newdata;
+                        drawpatternpreview();
+                        $("#txtpattern").val(generaterle(previewdata));
+                    }
+                });
+
+                //垂直翻转
+                $("#btnflipy").click(function () {
+                    if (previewdata != null && previewdata.length > 0) {
+                        var newrowcount = previewdata.length;
+                        var newcolcount = previewdata[0].length;
+                        var newdata = new Array();
+                        for (var i = 0; i < newrowcount; i++) {
+                            newdata[i] = new Array();
+                            for (var j = 0; j < newcolcount; j++) {
+                                newdata[i][j] = previewdata[newrowcount - 1 - i][j];
+                            }
+                        }
+                        previewdata = newdata;
+                        drawpatternpreview();
+                        $("#txtpattern").val(generaterle(previewdata));
+                    }
+                });
+
+                //重新载入
+                $("#btnreload").click(function () {
+                    $("#txtpattern").val($("#pattern").val());
+                    previewdata = read($("#pattern").val());
+                    drawpatternpreview();
+                });
+
+                //准备不透明插入
+                $("#btninsert").click(function () {
+                    //读取预设到数组
+                    patterndata = read($("#txtpattern").val());
+                    if (patterndata != null) {
+                        inserting = true;
+                        transparentinsert = false;
+                        canvas.title = "";
+                    }
+                    hidemask();
+                });
+
+                //准备透明插入
+                $("#btninserttransparent").click(function () {
+                    //读取预设到数组
+                    patterndata = read($("#txtpattern").val());
+                    if (patterndata != null) {
+                        inserting = true;
+                        transparentinsert = true;
+                        canvas.title = "";
+                    }
+                    hidemask();
+                });
+
+                //复制大图的部分到文本框
+                $("#btncopy").click(function () {
+                    var rle = generaterle(currentgamedata);
+                    if (rle != null)
+                        $("#txtpattern").val(rle);
+                });
+
+                //点击文本框默认全选
+                $("#txtpattern").focus(function () {
+                    $(this).select();
+                    //处理Chrome下不选中问题
+                    $(this).mouseup(function () {
+                        $(this).unbind("mouseup");
+                        return false;
+                    });
+                });
+
+                //点击空白隐藏遮罩
+                $(".mask").click(function () {
+                    inserting = false;
+                    canvas.title = tip1;
+                    hidemask();
+                });
+
+                //防止点到弹窗事件冒泡导致隐藏遮罩
+                $(".poptoolpanel").click(function () {
+                    return false;
+                });
+
+
+                //画布鼠标事件
+                $(canvas).mousedown(function (e) {
+                    if (!inserting)//插入状态跳过鼠标按下事件
+                    {
+                        if (!running && e.ctrlKey) {
+                            //拖拽开始
+                            $(canvas).css("cursor", "move");
+                            dragging = true;
+                            //记录坐标
+                            var coord = coordinate(e);
+                            dragx = coord.coord_X;
+                            dragy = coord.coord_Y;
+                            //保存当前图形，拖拽时显示
+                            var drawarea = canvas.getContext('2d');
+                            draggingImg = drawarea.getImageData(0, 0, canvas.width, canvas.height);
+                        }
+                        else {
+                            //开始绘制
+                            mousedrawing = true;
+                            if (e.which == 3) mousedrawtype = false; //右键擦除，左键绘画
+                            else mousedrawtype = true;
+
+                            var coord = coordinate(e); //取相对坐标
+                            var row = Math.floor(coord.coord_Y / size);
+                            var col = Math.floor(coord.coord_X / size);
+                            if (row < rowcount && col < colcount) {
+                                currentgamedata[row][col] = mousedrawtype;
+                                drawsingle(row, col, mousedrawtype);
+                            }
+                        }
+                    }
+                    return false; //防止chrome等浏览器鼠标指针变化
+                })
+                    .mouseup(function (e) {
+                        var coord = coordinate(e);
+                        if (inserting) {//插入完成
+                            inserting = false;
+                            nextgamedata = currentgamedata;
+                            if (e.which != 3) {//如果按的是右键则取消插入
+                                //当前鼠标所在格数
+                                var mouserow = Math.floor(coord.coord_Y / size);
+                                var mousecol = Math.floor(coord.coord_X / size);
+                                var patternrowcount = patterndata.length;
+                                var patterncolcount = patterndata[0].length;
+                                //插入图形，并防止图形过大时越界
+                                for (var i = 0; i < Math.min(patternrowcount, rowcount - mouserow); i++) {
+                                    for (var j = 0; j < Math.min(patterncolcount, colcount - mousecol); j++) {
+                                        if (patterndata[i][j] || !transparentinsert)//如果透明则只绘制有生命点，不透明时两者都绘
+                                            nextgamedata[mouserow + i][mousecol + j] = patterndata[i][j];
+                                    }
+                                }
+                            }
+                            currentgamedata = null;
+                            draw();
+                            canvas.title = tip1;
+                        }
+                        else if (dragging) {//拖拽完成
+                            //取位移点数
+                            var rowdiff = Math.floor((coord.coord_Y - dragy) / size);
+                            var coldiff = Math.floor((coord.coord_X - dragx) / size);
+                            //赋值
+                            nextgamedata = new Array();
+                            for (var i = 0; i < rowcount; i++) {
+                                nextgamedata[i] = new Array();
+                                for (var j = 0; j < colcount; j++) {
+                                    if (i - rowdiff >= 0 && i - rowdiff < rowcount && j - coldiff >= 0 && j - coldiff < colcount)
+                                        nextgamedata[i][j] = currentgamedata[i - rowdiff][j - coldiff];
+                                    else
+                                        nextgamedata[i][j] = false;
+                                }
+                            }
+                            currentgamedata = null;
+                            draw();
+                            dragging = false;
+                            $(canvas).css("cursor", "pointer");
+                        }
+                        else {//绘制完成
+                            mousedrawing = false;
+                        }
+                    })
+                    .mouseleave(function (e) {
+                        if (dragging) {//拖拽出区域则取消拖拽
+                            nextgamedata = currentgamedata;
+                            currentgamedata = null;
+                            draw();
+                            dragging = false;
+                            $(canvas).css("cursor", "pointer");
+                        }
+                        else {
+                            mousedrawing = false;
+                        }
+                    })
+                    .mousemove(function (e) {
+                        var coord = coordinate(e); //取相对坐标
+                        if (inserting) {//待插入
+                            //整体重绘
+                            nextgamedata = currentgamedata;
+                            currentgamedata = null;
+                            draw();
+
+                            //绘制指定图形，跟随鼠标，半透明
+                            //当前鼠标所在格数
+                            var mouserow = Math.floor(coord.coord_Y / size);
+                            var mousecol = Math.floor(coord.coord_X / size);
+                            var patternrowcount = patterndata.length;
+                            var patterncolcount = patterndata[0].length;
+                            var drawarea = canvas.getContext('2d');
+                            drawarea.globalAlpha = 0.7;
+                            for (var i = 0; i < patternrowcount; i++) {
+                                for (var j = 0; j < patterncolcount; j++) {
+                                    if (patterndata[i][j]) {
+                                        drawarea.globalAlpha = 0.7;
+                                        drawarea.fillStyle = life_color;
+                                        drawarea.fillRect((mousecol + j) * size + 1, (mouserow + i) * size + 1, size - 1, size - 1);
+                                    }
+                                    else if (!transparentinsert) {
+                                        drawarea.globalAlpha = 1;
+                                        drawarea.fillStyle = empty_color;
+                                        drawarea.fillRect((mousecol + j) * size + 1, (mouserow + i) * size + 1, size - 1, size - 1);
+                                    }
+                                }
+                            }
+                            drawarea.globalAlpha = 1;
+                        }
+                        else if (dragging) {//拖拽中
+                            var drawarea = canvas.getContext('2d');
+                            drawarea.fillStyle = border_color;
+                            drawarea.fillRect(0, 0, canvas.width, canvas.height); //清空画布
+                            drawarea.putImageData(draggingImg, Math.floor((coord.coord_X - dragx) / size) * size, Math.floor((coord.coord_Y - dragy) / size) * size); //重绘拖拽图形(取整个像素)
+                        }
+                        else {
+                            //绘制
+                            if (mousedrawing) {
+                                var row = Math.floor(coord.coord_Y / size);
+                                var col = Math.floor(coord.coord_X / size);
+                                if (row < rowcount && col < colcount) {
+                                    currentgamedata[row][col] = mousedrawtype;
+                                    drawsingle(row, col, mousedrawtype);
+                                }
+                            }
+                        }
+                    })
+                    .bind('contextmenu', function () {
+                        return false;
+                    });
+
+                //按下ctrl键时改变鼠标样式，但如果已经在运行中、拖拽中、绘制中或插入中，则不改变
+                $(document).bind('keydown', function (event) {
+                    if (event.keyCode == 17 && !running && !dragging && !mousedrawing && !inserting) {
+                        $(canvas).css("cursor", "move");
+                        canvas.title = tip2;
+                    }
+                }).bind('keyup', function (event) {
+                    if (event.keyCode == 17 && !running && !dragging && !mousedrawing && !inserting) {
+                        $(canvas).css("cursor", "pointer");
+                        canvas.title = tip1;
+                    }
+                });
+            }
+        }
+
+        ///////////函数列表
+
+        //加载模版
+        function loadmodels() {
+            var models = $("#models")[0];
+            for (var i = 0; i < modellist.length; i++) {
+                models.options.add(new Option(modellist[i].name, "m" + i));
+            }
+        }
+
+        //设置速度
+        function setspeed() {
+            speed = parseInt($("#speed").val());
+        }
+
+        //显示遮罩
+        function showmask() {
+            $(".mask").show();
+        }
+
+        //隐藏遮罩
+        function hidemask() {
+            $(".mask").hide();
+        }
+
+        //设置尺寸
+        function setsize() {
+            //记录变更前的尺寸、行列数
+            var lastsize = size;
+            var lastrowcount = rowcount;
+            var lastcolcount = colcount;
+
+            size = parseInt($("#size").val());
+            rowcount = Math.floor(($("#imgcontainer").height() - 5) / size);
+            colcount = Math.floor(($("#imgcontainer").width() - 5) / size);
+            canvas.height = size * rowcount + 1;
+            canvas.width = size * colcount + 1;
+            $(canvas).css("margin-top", ($("#imgcontainer").height() - canvas.height) / 2);
+
+            //如果不是初次加载，则进行缩放
+            if (currentgamedata != null) {
+                //计算行列差值，用于缩放图形
+                var rowdiff = Math.ceil(Math.abs(rowcount - lastrowcount) / 2);
+                var coldiff = Math.ceil(Math.abs(colcount - lastcolcount) / 2);
+                nextgamedata = new Array();
+                for (var i = 0; i < rowcount; i++) {
+                    nextgamedata[i] = new Array();
+                    for (var j = 0; j < colcount; j++) {
+                        if (size > lastsize) {
+                            //如果变大，则截取原帧中间一部分
+                            nextgamedata[i][j] = currentgamedata[i + rowdiff][j + coldiff];
+                        }
+                        else {
+                            //如果变小，则复制原帧，四周留空
+                            if (i >= rowdiff && i < rowdiff + lastrowcount && j >= coldiff && j < coldiff + lastcolcount)
+                                nextgamedata[i][j] = currentgamedata[i - rowdiff][j - coldiff];
+                            else
+                                nextgamedata[i][j] = false;
+                        }
+                    }
+                }
+                currentgamedata = null;
+                var drawarea = canvas.getContext('2d');
+                drawarea.fillStyle = border_color; //用边框色铺满背景
+                drawarea.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        //加载参数，初始化数组
+        function reset() {
+            step = 0;
+            var type = $("#models").val();
+            currentgamedata = null;
+            nextgamedata = new Array();
+            //根据初始化类型决定
+            if (type.indexOf("ran") == 0) {//随机赋值
+                for (var i = 0; i < rowcount; i++) {
+                    nextgamedata[i] = new Array();
+                    for (var j = 0; j < colcount; j++) {
+                        var ran = parseFloat(type.substring(3));
+                        if (Math.random() > ran) nextgamedata[i][j] = false;
+                        else nextgamedata[i][j] = true;
+                    }
+                }
+            }
+            else if (type.indexOf("m") == 0) {//获取模板
+                var model = modellist[parseInt(type.substring(1))];
+                $("#size").val(model.size);
+                setsize();
+                var modeldata = readrle(model.data);
+                var modelrowcount = modeldata.length;
+                var modelcolcount = modeldata[0].length;
+                var top = Math.floor((rowcount - modelrowcount) / 2);
+                var left = Math.floor((colcount - modelcolcount) / 2);
+                //把模板置于画面正中
+                for (var i = 0; i < rowcount; i++) {
+                    nextgamedata[i] = new Array();
+                    for (var j = 0; j < colcount; j++) {
+                        if (i >= top && i < top + modelrowcount && j >= left && j < left + modelcolcount) {
+                            nextgamedata[i][j] = modeldata[i - top][j - left];
+                        }
+                        else nextgamedata[i][j] = false;
+                    }
+                }
+            }
+            else { //默认清空
+                for (var i = 0; i < rowcount; i++) {
+                    nextgamedata[i] = new Array();
+                    for (var j = 0; j < colcount; j++) {
+                        nextgamedata[i][j] = false;
+                    }
+                }
+            }
+            var drawarea = canvas.getContext('2d');
+            drawarea.fillStyle = border_color; //用边框色铺满背景
+            drawarea.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        //计算下一帧内容
+        function calcnext() {
+            var startTime = new Date();
+            nextgamedata = new Array();
+            for (var i = 0; i < rowcount; i++) {
+                nextgamedata[i] = new Array();
+                for (var j = 0; j < colcount; j++) {
+                    //有3个邻居产生生命，有2个邻居保持原状，否则生命消失
+                    var ncount = 0; //邻居数
+                    if (i != 0 && j != 0)
+                        if (currentgamedata[i - 1][j - 1]) ncount++;  //左上角
+                    if (i != 0)
+                        if (currentgamedata[i - 1][j]) ncount++; //上方
+                    if (i != 0 && j != colcount - 1)
+                        if (currentgamedata[i - 1][j + 1]) ncount++; //右上角
+                    if (j != colcount - 1)
+                        if (currentgamedata[i][j + 1]) ncount++;  //右方
+                    if (i != rowcount - 1 && j != colcount - 1)
+                        if (currentgamedata[i + 1][j + 1]) ncount++; //右下角
+                    if (i != rowcount - 1)
+                        if (currentgamedata[i + 1][j]) ncount++; //上方
+                    if (i != rowcount - 1 && j != 0)
+                        if (currentgamedata[i + 1][j - 1]) ncount++; //左下角
+                    if (j != 0)
+                        if (currentgamedata[i][j - 1]) ncount++;  //左方
+
+                    if (ncount == 3) nextgamedata[i][j] = true;
+                    else if (ncount == 2) nextgamedata[i][j] = currentgamedata[i][j];
+                    else nextgamedata[i][j] = false;
+                }
+            }
+            var endTime = new Date();
+            var timespan = endTime.getTime() - startTime.getTime();
+            step++;
+            $("#msgstep").html("S:" + step + " ");
+            $("#msgcalctime").html("C:" + timespan + "/");
+        }
+
+        //将数组内容绘制到画布上
+        function draw() {
+            var startTime = new Date();
+            var drawarea = canvas.getContext('2d');
+            for (var i = 0; i < rowcount; i++) {
+                for (var j = 0; j < colcount; j++) {
+                    //只有重绘或者像素内容改变时才绘制
+                    if (currentgamedata == null || currentgamedata[i][j] != nextgamedata[i][j]) {
+                        if (nextgamedata[i][j]) {
+                            drawarea.fillStyle = life_color;
+                        }
+                        else {
+                            drawarea.fillStyle = empty_color;
+                        }
+                        //绘制像素点
+                        if (size <= 2)
+                            drawarea.fillRect(j * size, i * size, size, size);
+                        else
+                            drawarea.fillRect(j * size + 1, i * size + 1, size - 1, size - 1);
+                    }
+                }
+            }
+            currentgamedata = nextgamedata; //绘制完成后交换当前帧
+            nextgamedata = null;
+
+            var endTime = new Date();
+            var timespan = endTime.getTime() - startTime.getTime();
+
+            $("#msgdrawtime").html("D:" + timespan + "ms");
+        }
+
+        //绘制单个点（用于鼠标点击）
+        function drawsingle(row, col, type) {
+            var drawarea = canvas.getContext('2d');
+            if (type) drawarea.fillStyle = life_color;
+            else drawarea.fillStyle = empty_color;
+
+            if (size <= 2)
+                drawarea.fillRect(col * size, row * size, size, size);
+            else
+                drawarea.fillRect(col * size + 1, row * size + 1, size - 1, size - 1);
+        }
+
+        //定时计算和绘制下一步
+        function timer() {
+            if (running) {
+                calcnext();
+                draw();
+                setTimeout(timer, speed);
+            }
+        }
+
+        //加载预设样式类别
+        function loadpatterntypes() {
+            var patterntypelist = $("#patterntype")[0];
+            patterntypelist.options.length = 0;
+            for (var i = 0; i < patterntypes.length; i++) {
+                patterntypelist.options.add(new Option(patterntypes[i].text, patterntypes[i].value));
+            }
+
+            loadpatternlist($("#patterntype").val()); //加载样式列表
+        }
+
+        //加载预设样式列表
+        function loadpatternlist(type) {
+            var pattern = $("#pattern")[0];
+            pattern.options.length = 0;
+            for (var i = 0; i < patternlist.length; i++) {
+                if (patternlist[i].type == type)
+                    pattern.options.add(new Option(patternlist[i].name, patternlist[i].data));
+            }
+
+            $("#txtpattern").val($("#pattern").val()); //加载第一个形状
+        }
+
+        //加载预设形状预览图
+        function drawpatternpreview() {
+            if (previewdata == null) return;
+            //根据预设形状尺寸确定像素大小
+            var rowcount = previewdata.length;
+            var colcount = previewdata[0].length;
+            var psize = Math.min(Math.floor(($("#patterncontainer").width() - 5) / colcount), Math.floor(($("#patterncontainer").height() - 5) / rowcount));
+            if (psize > 16) psize = 16;
+            else if (psize < 2) psize = 2;
+            var framerowcount = Math.floor(($("#patterncontainer").height() - 5) / psize);  //计算外框尺寸（可能大于实际形状尺寸）
+            var framecolcount = Math.floor(($("#patterncontainer").width() - 5) / psize);
+
+            patterncanvas.width = framecolcount * psize + 1;
+            patterncanvas.height = framerowcount * psize + 1;
+            $(patterncanvas).css("margin-top", ($("#patterncontainer").height() - patterncanvas.height) / 2);
+            var drawarea = patterncanvas.getContext('2d');
+            drawarea.fillStyle = border_color; //用边框色铺满背景
+            drawarea.fillRect(0, 0, patterncanvas.width, patterncanvas.height);
+
+            //计算形状在整个外框中的起始点
+            var toprow = Math.floor((framerowcount - rowcount) / 2);
+            var leftcol = Math.floor((framecolcount - colcount) / 2);
+
+            for (var i = 0; i < framerowcount; i++) {
+                for (var j = 0; j < framecolcount; j++) {
+                    if (i >= toprow && i < toprow + rowcount && j >= leftcol && j < leftcol + colcount && previewdata[i - toprow][j - leftcol]) {
+                        //只在预设范围内绘制
+                        drawarea.fillStyle = life_color;
+                    }
+                    else drawarea.fillStyle = empty_color;
+
+                    if (psize <= 2)
+                        drawarea.fillRect(j * psize, i * psize, psize, psize);
+                    else
+                        drawarea.fillRect(j * psize + 1, i * psize + 1, psize - 1, psize - 1);
+                }
+            }
+        }
+    </script>
+    <style type="text/css">
+        body {
+            margin: 0px;
+            font-size: 12px;
+        }
+
+        #container {
+            width: 100%;
+            margin: 0px;
+            background-color: #FFF;
+        }
+
+        #image {
+            margin-top: 5px;
+            margin-left: auto;
+            margin-right: auto;
+            border: 0px;
+        }
+
+        #imgcontainer {
+            background-color: #CCC;
+            border: 1px solid #666;
+            text-align: center;
+        }
+
+        input {
+            -webkit-appearance: none;
+        }
+
+        input[type="button"] {
+            background-color: #99CCFF;
+            border: 1px solid #6699CC;
+            height: 25px;
+            margin: 0px;
+        }
+
+        select {
+            height: 25px;
+            margin: 0 5px 0 0;
+        }
+
+        .toolpanel {
+            width: 100%;
+        }
+
+        .toolitem {
+            margin: 4px 5px;
+            float: left;
+            min-width: 200px;
+        }
+
+        #msgstep,
+        #msgcalctime,
+        #msgdrawtime {
+            font-size: 10px;
+            display: inline-block;
+            width: 30px;
+        }
+
+        #btnstart,
+        #btnnext,
+        #btnstop {
+            width: 40px;
+        }
+
+        #size,
+        #speed {
+            width: 75px;
+        }
+
+        #models {
+            width: 140px;
+        }
+
+        #btncolor {
+            width: 30px;
+        }
+
+        #patterntype,
+        #pattern {
+            width: 90%;
+        }
+
+        #patterncontainer {
+            width: 90%;
+            background-color: #CCC;
+            border: 1px solid #666;
+            text-align: center;
+        }
+
+        #patterncanvas {
+            margin-left: auto;
+            margin-right: auto;
+            border: 0px;
+        }
+
+        input[type="button"].iconbutton {
+            width: 24px;
+            height: 24px;
+            background-color: transparent;
+            background-repeat: no-repeat;
+            border: 0px;
+            margin: 5px 6px;
+        }
+
+        #btnturnleft {
+            background-image: url(image/left.png);
+        }
+
+        #btnturnright {
+            background-image: url(image/right.png);
+        }
+
+        #btnflipx {
+            background-image: url(image/flipx.png);
+        }
+
+        #btnflipy {
+            background-image: url(image/flipy.png);
+        }
+
+        #btnreload {
+            background-image: url(image/reload.png);
+        }
+
+        #btninsert,
+        #btninserttransparent,
+        #btncopy {
+            width: 90px;
+            max-width: 30%;
+            height: 30px;
+            font-size: 11px;
+        }
+
+        #txtpattern {
+            height: 70px;
+            width: 100%;
+            font-size: 9px;
+            margin-bottom: 4px;
+        }
+
+        .mask {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            position: fixed;
+            _position: absolute;
+            top: 0;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        .poptoolpanel {
+            width: 80%;
+            max-width: 300px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #FFFFFF;
+            border: 1px #000 solid;
+            padding: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container">
+        <div class="toolpanel" id="toptoolpanel">
+            <div class="toolitem">
+                <b>模板：</b>
+                <select id="models" name="models">
+                    <option value="clear" selected>空</option>
+                    <option value="ran0.1">少量随机</option>
+                    <option value="ran0.25">中等随机</option>
+                    <option value="ran0.4">密集随机</option>
+                </select>
+                <input id="btninit" type="button" value="初始化">
+            </div>
+            <div class="toolitem">
+                <b>操作：</b>
+                <input id="btnstart" type="button" value="开始">
+                <input id="btnnext" type="button" value="单步">
+                <input id="btnstop" type="button" value="停止">
+            </div>
+            <div style="clear: both;">
+            </div>
+            <div class="toolitem">
+                <b>尺寸：</b>
+                <select id="size" name="size">
+                    <option value="16">很大</option>
+                    <option value="12">大</option>
+                    <option value="8" selected>中</option>
+                    <option value="4">小</option>
+                    <option value="2">很小</option>
+                </select>
+                <b>速度：</b>
+                <select id="speed" name="speed">
+                    <option value="800">很慢</option>
+                    <option value="400">慢</option>
+                    <option value="150">中</option>
+                    <option value="40" selected>快</option>
+                    <option value="0">很快</option>
+                </select>
+            </div>
+            <div class="toolitem">
+                <b>颜色：</b>
+                <input id="btncolor" type="button" value=""> &nbsp;
+                <span id="msgstep"></span>
+                <span id="msgcalctime"></span>
+                <span id="msgdrawtime"></span>
+                <input id="btnpop" type="button" value="插入/导出">
+            </div>
+            <div style="clear: both;">
+            </div>
+        </div>
+
+        <div id="imgcontainer">
+            <canvas id="image">
+            </canvas>
+        </div>
+
+        <div class="toolpanel">
+        </div>
+    </div>
+    <div class="mask">
+        <div class="poptoolpanel">
+            <div class="toolitem">
+                <div>
+                    <b>选择预设形状：</b>
+                </div>
+                <div>
+                    <select id="patterntype" name="patterntype">
+                        </select>
+                </div>
+                <div>
+                    <select id="pattern" name="pattern">
+                        </select>
+                </div>
+                <div id="patterncontainer">
+                    <canvas id="patterncanvas">
+                    </canvas>
+                </div>
+                <div>
+                    <input id="btnturnleft" class="iconbutton" type="button">
+                    <input id="btnturnright" class="iconbutton" type="button">
+                    <input id="btnflipx" class="iconbutton" type="button">
+                    <input id="btnflipy" class="iconbutton" type="button">
+                    <input id="btnreload" class="iconbutton" type="button">
+                </div>
+            </div>
+            <div class="toolitem">
+                <div>
+                    <b>代码：</b>
+                </div>
+                <div>
+                    <textarea id="txtpattern" rows="10" cols="10"></textarea>
+                </div>
+                <div>
+                    <input id="btninserttransparent" style="float: left;" type="button" value="透明插入&#10;↓">
+                    <input id="btninsert" style="float: left;" type="button" value="不透明插入&#10;↓">
+                    <input id="btncopy" style="float: right;" type="button" value="从画布导出&#10;↑">
+                    <div style="clear: both;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

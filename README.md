@@ -1,2 +1,3 @@
-# game-of-life-js
-Conway's Game of Life in HTML5 and Javascript.
+# Game of Life JS
+Conway's Game of Life Demo in HTML5 and Javascript.
+
