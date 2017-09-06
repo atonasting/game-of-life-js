@@ -75,13 +75,13 @@
                 draw();
 
                 //加载预设形状，随机选中
-                $("#patterncontainer").height($("#patterncontainer").width());
                 loadpatterntypes();
                 $("#patterntype")[0].selectedIndex = Math.floor(Math.random() * (patterntypes.length)); //随机选中一项
                 loadpatternlist($("#patterntype").val());
                 $("#pattern")[0].selectedIndex = Math.floor(Math.random() * ($("#pattern")[0].options.length)); //随机选中一项
                 $("#txtpattern").val($("#pattern").val());
                 previewdata = read($("#pattern").val());
+                $("#patterncontainer").height($("#patterncontainer").width());
                 drawpatternpreview();
                 hidemask();
 
@@ -625,8 +625,8 @@
             var endTime = new Date();
             var timespan = endTime.getTime() - startTime.getTime();
             step++;
-            $("#msgstep").html("S:" + step + " ");
-            $("#msgcalctime").html("C:" + timespan + "/");
+            $("#msgstep").html("S:" + step);
+            $("#msgcalctime").html("C:" + timespan + "ms");
         }
 
         //将数组内容绘制到画布上
@@ -710,15 +710,17 @@
             //根据预设形状尺寸确定像素大小
             var rowcount = previewdata.length;
             var colcount = previewdata[0].length;
-            var psize = Math.min(Math.floor(($("#patterncontainer").width() - 5) / colcount), Math.floor(($("#patterncontainer").height() - 5) / rowcount));
+            var containerwidth = $("#patterncontainer").width();
+            var containerheight = $("#patterncontainer").height();
+            var psize = Math.min(Math.floor((containerwidth - 5) / colcount), Math.floor((containerheight - 5) / rowcount));
             if (psize > 16) psize = 16;
             else if (psize < 2) psize = 2;
-            var framerowcount = Math.floor(($("#patterncontainer").height() - 5) / psize);  //计算外框尺寸（可能大于实际形状尺寸）
-            var framecolcount = Math.floor(($("#patterncontainer").width() - 5) / psize);
+            var framerowcount = Math.floor((containerheight - 5) / psize);  //计算外框尺寸（可能大于实际形状尺寸）
+            var framecolcount = Math.floor((containerwidth - 5) / psize);
 
             patterncanvas.width = framecolcount * psize + 1;
             patterncanvas.height = framerowcount * psize + 1;
-            $(patterncanvas).css("margin-top", ($("#patterncontainer").height() - patterncanvas.height) / 2);
+            $(patterncanvas).css("margin-top", (containerheight - patterncanvas.height) / 2);
             var drawarea = patterncanvas.getContext('2d');
             drawarea.fillStyle = border_color; //用边框色铺满背景
             drawarea.fillRect(0, 0, patterncanvas.width, patterncanvas.height);
@@ -823,11 +825,12 @@
 
         #patterntype,
         #pattern {
-            width: 90%;
+            width: 100%;
         }
 
         #patterncontainer {
-            width: 90%;
+            width: 240px;
+            height: 240px;
             background-color: #CCC;
             border: 1px solid #666;
             text-align: center;
@@ -871,7 +874,7 @@
         #btninsert,
         #btninserttransparent,
         #btncopy {
-            width: 90px;
+            width: 80px;
             max-width: 30%;
             height: 30px;
             font-size: 11px;
@@ -896,7 +899,6 @@
         }
 
         .poptoolpanel {
-            width: 80%;
             max-width: 300px;
             position: absolute;
             top: 50%;
